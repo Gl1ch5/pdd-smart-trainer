@@ -150,7 +150,7 @@
   }
 
   // Filter Algorithm
-  function applyFilters() {
+  function applyFilters(preserveIndex = false) {
     const query = state.searchQuery.toLowerCase().trim();
     
     state.filteredQuestions = state.questions.filter((q) => {
@@ -190,8 +190,10 @@
       return true;
     });
 
-    // Reset current index to 0 when filter changes
-    state.currentIndex = 0;
+    // Reset current index to 0 when filter changes unless preserved
+    if (!preserveIndex) {
+      state.currentIndex = 0;
+    }
 
     renderActiveFilterBadges();
     renderQuestionNavStrip();
@@ -623,11 +625,13 @@
   // Bootstrap Application
   function init() {
     // Read question number from URL hash if provided (e.g. #2 or #q=2)
+    let preserved = false;
     const hash = window.location.hash.replace('#', '');
     if (hash) {
       const qNum = parseInt(hash.replace(/[^0-9]/g, ''), 10);
       if (!isNaN(qNum) && qNum >= 1 && qNum <= 800) {
         state.currentIndex = qNum - 1;
+        preserved = true;
       }
     }
     loadPersistedState();
@@ -636,7 +640,7 @@
     renderTicketsGrid();
     attachEventListeners();
     initKeyboardListeners();
-    applyFilters();
+    applyFilters(preserved);
   }
 
   // Launch when DOM is ready
