@@ -158,7 +158,7 @@ body {
   margin: 0 auto;
   padding: 24px;
   display: grid;
-  grid-template-columns: 340px 1fr;
+  grid-template-columns: 340px minmax(0, 1fr);
   gap: 24px;
   flex: 1;
   align-items: start;
@@ -366,6 +366,8 @@ body {
   display: flex;
   flex-direction: column;
   gap: 16px;
+  min-width: 0;
+  width: 100%;
 }
 
 /* Status header bar */
@@ -425,6 +427,8 @@ body {
   gap: 6px;
   overflow-x: auto;
   padding: 4px 0 8px 0;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .question-nav-strip::-webkit-scrollbar {
@@ -487,6 +491,8 @@ body {
   display: flex;
   flex-direction: column;
   gap: 20px;
+  min-width: 0;
+  width: 100%;
 }
 
 .question-meta {
