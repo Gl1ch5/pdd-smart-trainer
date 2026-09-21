@@ -622,6 +622,14 @@
 
   // Bootstrap Application
   function init() {
+    // Read question number from URL hash if provided (e.g. #2 or #q=2)
+    const hash = window.location.hash.replace('#', '');
+    if (hash) {
+      const qNum = parseInt(hash.replace(/[^0-9]/g, ''), 10);
+      if (!isNaN(qNum) && qNum >= 1 && qNum <= 800) {
+        state.currentIndex = qNum - 1;
+      }
+    }
     loadPersistedState();
     initDOMElements();
     renderTagsList();
