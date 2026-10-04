@@ -2,8 +2,24 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#f1f5f9" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0b1120" media="(prefers-color-scheme: dark)">
   <title>ПДД 2026 — Официальные билеты с умными фильтрами</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <script>
+    // Apply saved theme before first paint to avoid a flash of the wrong theme
+    (function () {
+      try {
+        var saved = localStorage.getItem('pdd_theme');
+        var theme = saved || (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+        document.documentElement.setAttribute('data-theme', theme);
+      } catch (e) {
+        document.documentElement.setAttribute('data-theme', 'light');
+      }
+    })();
+  </script>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -11,132 +27,241 @@
   <!-- Top Navigation Header -->
   <header class="app-header">
     <div class="header-container">
-      <div class="logo-area" id="btnLogo">
-        <div class="logo-icon-box">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="3" y="11" width="18" height="10" rx="2"></rect>
-            <circle cx="12" cy="5" r="2"></circle>
-            <path d="M12 7v4"></path>
-            <line x1="8" y1="16" x2="8" y2="16"></line>
-            <line x1="16" y1="16" x2="16" y2="16"></line>
+      <button type="button" class="icon-btn filters-toggle" id="btnOpenFilters" aria-label="Открыть фильтры" aria-controls="filterPanel" aria-expanded="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="4" y1="6" x2="20" y2="6"></line>
+          <line x1="7" y1="12" x2="17" y2="12"></line>
+          <line x1="10" y1="18" x2="14" y2="18"></line>
+        </svg>
+        <span class="filters-toggle-dot" id="filtersDot" hidden></span>
+      </button>
+
+      <a class="logo-area" id="btnLogo" href="#" title="На главную — сбросить фильтры">
+        <span class="logo-emblem" aria-hidden="true">
+          <svg viewBox="0 0 48 56" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <linearGradient id="gibddGold" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0" stop-color="#fde68a"/>
+                <stop offset=".5" stop-color="#eab308"/>
+                <stop offset="1" stop-color="#a16207"/>
+              </linearGradient>
+              <clipPath id="gibddInner"><path d="M24 6.5 40 11.3V27c0 11.2-6.9 18.6-16 22.6C14.9 45.6 8 38.2 8 27V11.3Z"/></clipPath>
+            </defs>
+            <path d="M24 1.5 44.5 7.6V27c0 14.2-9 23.4-20.5 27.6C12.5 50.4 3.5 41.2 3.5 27V7.6Z" fill="url(#gibddGold)"/>
+            <g clip-path="url(#gibddInner)">
+              <rect width="48" height="56" fill="#1e3a8a"/>
+              <rect width="48" height="15" fill="#ffffff"/>
+              <rect y="15" width="48" height="4.4" fill="#2563eb"/>
+              <rect y="19.4" width="48" height="4.4" fill="#dc2626"/>
+              <path d="M24 26l1.6 3.3 3.6.5-2.6 2.5.6 3.6-3.2-1.7-3.2 1.7.6-3.6-2.6-2.5 3.6-.5Z" fill="url(#gibddGold)"/>
+            </g>
+            <text x="24" y="44" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-weight="900" font-size="7.4" fill="#ffffff">ГИБДД</text>
           </svg>
+        </span>
+        <span class="logo-text">
+          <span class="logo-title">ПДД Тренажер</span>
+          <span class="logo-badge">Билеты ГИБДД · категории ABM</span>
+        </span>
+      </a>
+
+      <div class="header-stats" aria-label="Статистика">
+        <div class="stat-item" title="Правильных ответов">
+          <span class="stat-dot green"></span>
+          <span class="stat-label">Верно</span>
+          <span class="stat-value green" id="statCorrect">0</span>
         </div>
-        <div>
-          <div class="logo-title">ПДД Тренажер</div>
-          <div class="logo-badge">Официальные билеты ГИБДД (Категории ABM)</div>
+        <div class="stat-item" title="Ошибок">
+          <span class="stat-dot red"></span>
+          <span class="stat-label">Ошибки</span>
+          <span class="stat-value red" id="statWrong">0</span>
+        </div>
+        <div class="stat-item stat-progress" title="Пройдено вопросов">
+          <span class="stat-label">Пройдено</span>
+          <span class="stat-value" id="statTotal">0 / 800</span>
+          <span class="progress-track"><span class="progress-fill" id="statProgress"></span></span>
         </div>
       </div>
 
-      <div class="header-stats">
-        <div class="stat-item">
-          <span class="stat-label">Правильно:</span>
-          <span class="stat-value green" id="statCorrect">0</span>
-        </div>
-        <div class="stat-item">
-          <span class="stat-label">Ошибки:</span>
-          <span class="stat-value red" id="statWrong">0</span>
-        </div>
-        <div class="stat-item">
-          <span class="stat-label">Пройдено:</span>
-          <span class="stat-value blue" id="statTotal">0 / 800</span>
-        </div>
-      </div>
+      <button type="button" class="icon-btn" id="btnTheme" aria-label="Переключить тему" title="Переключить тему">
+        <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+        </svg>
+        <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="4"></circle>
+          <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"></path>
+        </svg>
+      </button>
     </div>
   </header>
 
+  <div class="drawer-overlay" id="drawerOverlay" hidden></div>
+
   <!-- Main Container -->
   <main class="app-container">
-    
+
     <!-- Sidebar: Filters & Modes -->
-    <aside class="filter-panel">
-      
-      <!-- Search Input -->
-      <div class="filter-section">
-        <div class="filter-heading">Поиск по тексту</div>
-        <div class="search-wrapper">
-          <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="11" cy="11" r="8"></circle>
-            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-          </svg>
-          <input type="text" id="searchInput" class="search-input" placeholder="Поиск (60 км/ч, жгут, трамвай...)">
-        </div>
-      </div>
+    <aside class="filter-panel" id="filterPanel" aria-label="Фильтры">
 
-      <!-- Quick Mode Selection -->
-      <div class="filter-section">
-        <div class="filter-heading">Режим подготовки</div>
-        <div class="mode-toggle-group">
-          <button type="button" class="mode-btn active" id="btnAllQuestions">Все вопросы</button>
-          <button type="button" class="mode-btn" id="btnFilterErrors">Мои ошибки</button>
-        </div>
-        <button type="button" class="chip-btn" id="btnFilterFavs" style="justify-content: center;">
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"></path>
+      <div class="panel-header">
+        <span class="panel-title">Фильтры</span>
+        <button type="button" class="icon-btn" id="btnCloseFilters" aria-label="Закрыть фильтры">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
           </svg>
-          <span>Избранные вопросы</span>
         </button>
       </div>
 
-      <!-- Smart Filter Tags -->
-      <div class="filter-section">
-        <div class="filter-heading">Умные фильтры и темы</div>
-        <div class="tag-grid" id="tagsContainer">
-          <!-- Dynamically populated via app.js -->
+      <div class="panel-body">
+        <!-- Search Input -->
+        <div class="filter-section">
+          <label class="filter-heading" for="searchInput">Поиск по тексту</label>
+          <div class="search-wrapper">
+            <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="11" cy="11" r="8"></circle>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            </svg>
+            <input type="search" id="searchInput" class="search-input" placeholder="60 км/ч, жгут, трамвай…" autocomplete="off" enterkeyhint="search">
+            <button type="button" class="search-clear" id="btnClearSearch" aria-label="Очистить поиск" hidden>&times;</button>
+          </div>
+          <label class="check-row">
+            <input type="checkbox" id="searchInExplanation" checked>
+            <span>Искать также в пояснениях</span>
+          </label>
+        </div>
+
+        <!-- Status / mode -->
+        <div class="filter-section">
+          <div class="filter-heading">Режим подготовки</div>
+          <div class="segmented segmented-status" id="statusGroup" role="radiogroup" aria-label="Режим подготовки">
+            <button type="button" class="seg-btn" data-value="all" role="radio">Все<span class="seg-count" data-count="all"></span></button>
+            <button type="button" class="seg-btn" data-value="new" role="radio">Новые<span class="seg-count" data-count="new"></span></button>
+            <button type="button" class="seg-btn" data-value="wrong" role="radio">Ошибки<span class="seg-count" data-count="wrong"></span></button>
+            <button type="button" class="seg-btn" data-value="correct" role="radio">Верные<span class="seg-count" data-count="correct"></span></button>
+            <button type="button" class="seg-btn seg-wide" data-value="favorites" role="radio">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"></path></svg>
+              Избранное<span class="seg-count" data-count="favorites"></span>
+            </button>
+          </div>
+          <p class="filter-hint" id="statusHint" hidden>В режиме «Ошибки» вопросы можно решать заново — правильный ответ обновит статистику.</p>
+        </div>
+
+        <!-- Smart Filter Tags -->
+        <div class="filter-section">
+          <div class="filter-heading-row">
+            <div class="filter-heading">Темы</div>
+            <div class="mini-toggle" id="tagModeGroup" role="radiogroup" aria-label="Сочетание тем">
+              <button type="button" class="mini-btn" data-value="and" role="radio" title="Вопрос должен относиться ко всем выбранным темам">Все</button>
+              <button type="button" class="mini-btn" data-value="or" role="radio" title="Вопрос относится хотя бы к одной выбранной теме">Любая</button>
+            </div>
+          </div>
+          <div class="tag-groups" id="tagsContainer">
+            <!-- Dynamically populated via app.js -->
+          </div>
+        </div>
+
+        <!-- Question type -->
+        <div class="filter-section">
+          <div class="filter-heading">Тип вопроса</div>
+          <div class="segmented" id="mediaGroup" role="radiogroup" aria-label="Тип вопроса">
+            <button type="button" class="seg-btn" data-value="all" role="radio">Любой</button>
+            <button type="button" class="seg-btn" data-value="image" role="radio">С картинкой</button>
+            <button type="button" class="seg-btn" data-value="text" role="radio">Без картинки</button>
+          </div>
+          <div class="filter-subheading">Вариантов ответа</div>
+          <div class="segmented" id="answersGroup" role="radiogroup" aria-label="Количество вариантов ответа">
+            <button type="button" class="seg-btn" data-value="all" role="radio">Любое</button>
+            <button type="button" class="seg-btn" data-value="2" role="radio">2</button>
+            <button type="button" class="seg-btn" data-value="3" role="radio">3</button>
+            <button type="button" class="seg-btn" data-value="4" role="radio">4+</button>
+          </div>
+        </div>
+
+        <!-- Tickets -->
+        <div class="filter-section">
+          <div class="filter-heading-row">
+            <div class="filter-heading">Билеты</div>
+            <button type="button" class="link-btn" id="btnClearTickets" hidden>Снять выбор</button>
+          </div>
+          <div class="ticket-grid" id="ticketsGrid">
+            <!-- Dynamically populated via app.js -->
+          </div>
+          <div class="ticket-legend">
+            <span><i class="legend-swatch done"></i>Без ошибок</span>
+            <span><i class="legend-swatch errors"></i>Есть ошибки</span>
+            <span><i class="legend-swatch partial"></i>Начат</span>
+          </div>
+          <div class="filter-subheading">Блок вопросов в билете</div>
+          <div class="segmented" id="blockGroup" role="radiogroup" aria-label="Блок вопросов">
+            <button type="button" class="seg-btn" data-value="all" role="radio">Все</button>
+            <button type="button" class="seg-btn" data-value="1" role="radio">1–5</button>
+            <button type="button" class="seg-btn" data-value="2" role="radio">6–10</button>
+            <button type="button" class="seg-btn" data-value="3" role="radio">11–15</button>
+            <button type="button" class="seg-btn" data-value="4" role="radio">16–20</button>
+          </div>
+        </div>
+
+        <!-- Order -->
+        <div class="filter-section">
+          <div class="filter-heading">Порядок вопросов</div>
+          <div class="segmented" id="orderGroup" role="radiogroup" aria-label="Порядок вопросов">
+            <button type="button" class="seg-btn" data-value="seq" role="radio">По порядку</button>
+            <button type="button" class="seg-btn" data-value="shuffle" role="radio">Вперемешку</button>
+          </div>
+        </div>
+
+        <!-- Management Controls -->
+        <div class="filter-section panel-actions">
+          <button type="button" class="btn btn-secondary btn-block" id="btnResetFilters">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
+              <path d="M3 3v5h5"></path>
+            </svg>
+            <span>Сбросить все фильтры</span>
+          </button>
+          <button type="button" class="btn btn-danger btn-block" id="btnResetStats">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="3 6 5 6 21 6"></polyline>
+              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+            </svg>
+            <span>Сбросить прогресс</span>
+          </button>
         </div>
       </div>
 
-      <!-- Quick Ticket Selector (1..40) -->
-      <div class="filter-section">
-        <div class="filter-heading">Выбор билета (1—40)</div>
-        <div class="ticket-grid" id="ticketsGrid">
-          <!-- Dynamically populated via app.js -->
-        </div>
+      <div class="panel-footer">
+        <button type="button" class="btn btn-primary btn-block" id="btnApplyFilters">Показать вопросы</button>
       </div>
-
-      <!-- Management Controls -->
-      <div class="filter-section" style="margin-top: auto; padding-top: 10px; border-top: 1px solid var(--border-light);">
-        <button type="button" class="btn btn-secondary" id="btnResetFilters" style="width: 100%; justify-content: center;">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
-            <path d="M3 3v5h5"></path>
-          </svg>
-          <span>Сбросить все фильтры</span>
-        </button>
-        <button type="button" class="btn btn-danger" id="btnResetStats" style="width: 100%; justify-content: center; margin-top: 8px;">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <polyline points="3 6 5 6 21 6"></polyline>
-            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-          </svg>
-          <span>Сбросить прогресс</span>
-        </button>
-      </div>
-
     </aside>
 
     <!-- Main Content Area -->
     <section class="content-area">
-      
+
       <!-- Results Status Bar -->
       <div class="results-bar">
-        <div class="results-info">
+        <div class="results-top">
           <div class="results-count" id="resultsCount">Найдено вопросов: 0</div>
-          <div class="results-tags" id="activeFilters">
-            <!-- Active filter chips appended here -->
-          </div>
+          <div class="results-progress" id="resultsProgress"></div>
+        </div>
+        <div class="results-tags" id="activeFilters">
+          <!-- Active filter chips appended here -->
         </div>
       </div>
 
       <!-- Linear Question Number Navigation (1..N) -->
-      <div class="question-nav-strip" id="questionNavStrip">
+      <div class="question-nav-strip" id="questionNavStrip" aria-label="Навигация по вопросам">
         <!-- Question items rendered dynamically -->
       </div>
 
       <!-- Question Card -->
-      <div class="question-card" id="questionCard">
-        
+      <article class="question-card" id="questionCard">
+
         <!-- Header: Meta & Tags -->
         <div class="question-meta">
-          <span class="question-id-tag" id="qMetaId">Билет 1 · Вопрос 1</span>
+          <div class="question-id-row">
+            <span class="question-id-tag" id="qMetaId">Билет 1 · Вопрос 1</span>
+            <span class="question-position" id="qPosition"></span>
+          </div>
           <div class="question-tags-row" id="qMetaTags"></div>
         </div>
 
@@ -145,7 +270,16 @@
 
         <!-- Question Image Illustration -->
         <div class="question-image-wrapper" id="qImageWrapper">
-          <img class="question-img" id="qImage" src="" alt="Иллюстрация к вопросу">
+          <img class="question-img" id="qImage" alt="Иллюстрация к вопросу" decoding="async">
+          <button type="button" class="zoom-btn" id="btnZoom" aria-label="Увеличить картинку">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+              <polyline points="15 3 21 3 21 9"></polyline>
+              <polyline points="9 21 3 21 3 15"></polyline>
+              <line x1="21" y1="3" x2="14" y2="10"></line>
+              <line x1="3" y1="21" x2="10" y2="14"></line>
+            </svg>
+          </button>
+          <div class="image-error" id="qImageError" hidden>Не удалось загрузить иллюстрацию</div>
         </div>
 
         <!-- Answers Options -->
@@ -153,58 +287,81 @@
           <!-- Answer options populated dynamically -->
         </div>
 
-        <!-- Official Detailed Comment / Rule Explanation -->
-        <div class="explanation-box" id="qExplanation" style="display: none;">
-          <div class="explanation-heading">
+        <!-- Result + Official Detailed Comment / Rule Explanation -->
+        <div class="explanation-box" id="qExplanation" hidden>
+          <div class="explanation-heading" id="qExplanationHeading">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <circle cx="12" cy="12" r="10"></circle>
               <line x1="12" y1="16" x2="12" y2="12"></line>
               <line x1="12" y1="8" x2="12.01" y2="8"></line>
             </svg>
-            <span>Пояснение из официальных правил ПДД</span>
+            <span>Пояснение</span>
           </div>
           <div class="explanation-text" id="qExplanationText"></div>
         </div>
 
         <!-- Bottom Controls Bar -->
         <div class="question-controls">
-          <button type="button" class="btn btn-secondary" id="btnPrev">
+          <button type="button" class="btn btn-secondary" id="btnPrev" aria-label="Предыдущий вопрос">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <polyline points="15 18 9 12 15 6"></polyline>
             </svg>
-            <span>Назад (←)</span>
+            <span class="btn-label">Назад</span>
           </button>
 
-          <button type="button" class="btn btn-secondary" id="btnFavorite">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"></path>
-            </svg>
-            <span>В избранное</span>
-          </button>
+          <div class="controls-middle">
+            <button type="button" class="btn btn-secondary btn-fav" id="btnFavorite" aria-pressed="false" aria-label="В избранное">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"></path></svg>
+              <span class="btn-label" id="btnFavoriteLabel">В избранное</span>
+            </button>
+            <button type="button" class="btn btn-secondary" id="btnRetry" aria-label="Ответить заново" hidden>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
+                <path d="M3 3v5h5"></path>
+              </svg>
+              <span class="btn-label">Заново</span>
+            </button>
+          </div>
 
-          <button type="button" class="btn btn-primary" id="btnNext">
-            <span>Далее (→)</span>
+          <button type="button" class="btn btn-primary" id="btnNext" aria-label="Следующий вопрос">
+            <span class="btn-label">Далее</span>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <polyline points="9 18 15 12 9 6"></polyline>
             </svg>
           </button>
         </div>
 
-      </div>
+      </article>
 
       <!-- Empty State -->
-      <div class="empty-state" id="emptyState" style="display: none;">
-        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2">
-          <circle cx="12" cy="12" r="10"></circle>
-          <line x1="8" y1="12" x2="16" y2="12"></line>
+      <div class="empty-state" id="emptyState" hidden>
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="11" cy="11" r="8"></circle>
+          <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+          <line x1="8" y1="11" x2="14" y2="11"></line>
         </svg>
-        <div class="empty-title">Вопросы не найдены</div>
-        <div class="empty-desc">По выбранной комбинации фильтров нет подходящих вопросов. Попробуйте отключить некоторые фильтры или сбросить поиск.</div>
+        <div class="empty-title" id="emptyTitle">Вопросы не найдены</div>
+        <div class="empty-desc" id="emptyDesc">По выбранной комбинации фильтров нет подходящих вопросов. Попробуйте отключить некоторые фильтры или сбросить поиск.</div>
+        <button type="button" class="btn btn-primary" id="btnEmptyReset">Сбросить фильтры</button>
+      </div>
+
+      <div class="kbd-hints">
+        <span><kbd>1</kbd>–<kbd>5</kbd> ответ</span>
+        <span><kbd>←</kbd> <kbd>→</kbd> навигация</span>
+        <span><kbd>Пробел</kbd> далее</span>
+        <span><kbd>F</kbd> избранное</span>
+        <span><kbd>R</kbd> заново</span>
+        <span><kbd>/</kbd> поиск</span>
       </div>
 
     </section>
 
   </main>
+
+  <!-- Image lightbox -->
+  <div class="lightbox" id="lightbox" hidden role="dialog" aria-label="Иллюстрация к вопросу">
+    <img id="lightboxImg" alt="Иллюстрация к вопросу">
+  </div>
 
   <!-- PDD Database and Core Script -->
   <script src="pdd_data.js"></script>
