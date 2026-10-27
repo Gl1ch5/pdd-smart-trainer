@@ -8,42 +8,171 @@
 
   const QUESTIONS_PER_TICKET = 20;
   const TICKETS_COUNT = 40;
+  const DAY_MS = 24 * 60 * 60 * 1000;
+
+  // Backend: same origin when served by server.py (grzxk.ru/pdd, localhost),
+  // otherwise (GitHub Pages, file://) the hosted API.
+  const API_BASE = (function () {
+    if (window.PDD_API_BASE) return window.PDD_API_BASE;
+    const host = window.location.hostname;
+    if (window.location.protocol === 'file:' || host.endsWith('github.io')) return 'https://grzxk.ru/pdd/api/';
+    return 'api/';
+  })();
+
+  // ---------------------------------------------------------------------------
+  // AI tag vocabulary (see docs/TAGGING_SPEC.md)
+  // ---------------------------------------------------------------------------
+
+  const TOPICS = [
+    ['general', 'Общие положения, термины'],
+    ['driver_duties', 'Обязанности водителя'],
+    ['special_signals', 'Спецсигналы и аварийка'],
+    ['signals_adjuster', 'Светофоры и регулировщик'],
+    ['signs', 'Дорожные знаки'],
+    ['markings', 'Разметка'],
+    ['maneuvering', 'Повороты, развороты, задний ход'],
+    ['lane_position', 'Полосы и расположение'],
+    ['speed', 'Скорость'],
+    ['overtaking', 'Обгон и встречный разъезд'],
+    ['stopping_parking', 'Остановка и стоянка'],
+    ['intersections', 'Перекрестки'],
+    ['pedestrians', 'Пешеходные переходы'],
+    ['railway', 'Ж/д переезды'],
+    ['highway_residential', 'Автомагистрали и жилые зоны'],
+    ['route_vehicles', 'Маршрутные ТС'],
+    ['lights_horn', 'Фары и звуковой сигнал'],
+    ['towing', 'Буксировка'],
+    ['passengers_cargo', 'Перевозка людей и грузов'],
+    ['malfunctions', 'Неисправности'],
+    ['safety', 'Безопасность и техника управления'],
+    ['first_aid', 'Первая помощь'],
+    ['liability', 'Ответственность, ОСАГО, ДТП']
+  ];
+
+  const FORMATS = [
+    ['who_first', 'Кто проедет первым'],
+    ['allowed', 'Можно ли / разрешено ли'],
+    ['action', 'Как действовать'],
+    ['meaning', 'Что означает знак/сигнал'],
+    ['trajectory', 'Траектория и полоса'],
+    ['value', 'Ответ — число'],
+    ['definition', 'Термины'],
+    ['fact', 'Прочие факты']
+  ];
+
+  const NUMBER_KINDS = [
+    ['speed', 'Скорость'],
+    ['distance', 'Расстояния'],
+    ['dimension', 'Размеры, мм'],
+    ['time', 'Сроки и время'],
+    ['percent', 'Проценты'],
+    ['mass', 'Масса'],
+    ['age', 'Возраст'],
+    ['count', 'Количество'],
+    ['other', 'Другое']
+  ];
+
+  const INVOLVES = [
+    ['tram', 'Трамвай'],
+    ['pedestrian', 'Пешеходы'],
+    ['cyclist', 'Велосипедисты'],
+    ['motorcycle', 'Мотоциклы, мопеды'],
+    ['route_vehicle', 'Автобусы, троллейбусы'],
+    ['emergency', 'Спецтранспорт'],
+    ['adjuster', 'Регулировщик'],
+    ['traffic_light', 'Светофор'],
+    ['railway', 'Ж/д переезд'],
+    ['roundabout', 'Круговое движение'],
+    ['truck_trailer', 'Грузовики, прицепы'],
+    ['children', 'Дети'],
+    ['bad_conditions', 'Ночь, туман, гололед'],
+    ['tunnel_bridge', 'Тоннели и мосты'],
+    ['mountain_road', 'Горные дороги, уклоны']
+  ];
+
+  // Quick picks — combined with AND
+  const QUICK = [
+    ['memorize', 'Числа и нормы', 'Ответ требует знать конкретное число: скорость, метры, мм, сроки, проценты'],
+    ['trap', 'Ловушки', 'Интуитивный ответ неверен или всё решает мелкая деталь'],
+    ['my_repeat', 'Мои частые ошибки', 'Вы ошибались в этом вопросе 2 и более раз'],
+    ['stale', 'Давно не повторял', 'Отвечали больше 7 дней назад'],
+    ['global_hard', 'Часто ошибаются все', 'По статистике всех пользователей: 40% ошибок и больше']
+  ];
+
+  const DIFFICULTY_LABELS = { 1: 'Легкий', 2: 'Средний', 3: 'Сложный' };
+  const FORMAT_LABELS = Object.fromEntries(FORMATS);
+  const TOPIC_LABELS = Object.fromEntries(TOPICS);
+
+  // Chip facets. Values inside a facet are combined with OR (topics: AND/OR switch),
+  // facets are combined with AND.
+  const CHIP_FACETS = [
+    {
+      id: 'quick', container: 'quickContainer', items: QUICK,
+      match: (q, v) => quickMatches(q, v), combine: 'and'
+    },
+    {
+      id: 'numberKinds', container: 'numbersContainer', items: NUMBER_KINDS,
+      match: (q, v) => q.ai.memorize_number && q.ai.number_kind === v, combine: 'or'
+    },
+    {
+      id: 'formats', container: 'formatsContainer', items: FORMATS,
+      match: (q, v) => q.ai.format === v, combine: 'or'
+    },
+    {
+      id: 'topics', container: 'tagsContainer', items: TOPICS,
+      match: (q, v) => q.ai.topics.includes(v), combine: () => state.filters.topicMode
+    },
+    {
+      id: 'involves', container: 'involvesContainer', items: INVOLVES,
+      match: (q, v) => q.ai.involves.includes(v), combine: 'or'
+    }
+  ];
+
+  const FACET_BY_ID = new Map(CHIP_FACETS.map((f) => [f.id, f]));
 
   // Default filter values (used for reset and for "is filter active" checks)
   const DEFAULT_FILTERS = {
     tickets: [],
-    tags: [],
-    tagMode: 'and', // 'and' | 'or'
-    status: 'all', // 'all' | 'new' | 'wrong' | 'correct' | 'favorites'
+    quick: [],
+    numberKinds: [],
+    formats: [],
+    topics: [],
+    involves: [],
+    topicMode: 'or', // 'and' | 'or'
+    status: 'all', // 'all' | 'new' | 'wrong' | 'ever_wrong' | 'correct' | 'favorites'
+    difficulty: 'all', // 'all' | '1' | '2' | '3'
     media: 'all', // 'all' | 'image' | 'text'
     answers: 'all', // 'all' | '2' | '3' | '4' (4 = four or more)
     block: 'all', // 'all' | '1'..'4' (questions 1–5, 6–10, 11–15, 16–20)
-    order: 'seq', // 'seq' | 'shuffle'
+    order: 'seq', // 'seq' | 'shuffle' | 'hard' | 'mistakes'
     searchInExplanation: true
   };
+
+  const SET_FILTERS = ['tickets', 'quick', 'numberKinds', 'formats', 'topics', 'involves'];
+
+  function freshFilters() {
+    const f = { ...DEFAULT_FILTERS };
+    SET_FILTERS.forEach((k) => { f[k] = new Set(); });
+    return f;
+  }
 
   // Master State
   const state = {
     questions: window.PDD_QUESTIONS || [],
     filteredQuestions: [],
     currentIndex: 0,
-    filters: {
-      tickets: new Set(),
-      tags: new Set(),
-      tagMode: DEFAULT_FILTERS.tagMode,
-      status: DEFAULT_FILTERS.status,
-      media: DEFAULT_FILTERS.media,
-      answers: DEFAULT_FILTERS.answers,
-      block: DEFAULT_FILTERS.block,
-      order: DEFAULT_FILTERS.order,
-      searchInExplanation: DEFAULT_FILTERS.searchInExplanation
-    },
+    filters: freshFilters(),
     searchQuery: '',
-    answersLog: {}, // { questionId: { selectedIndex, isCorrect, timestamp } }
+    // { questionId: { selectedIndex, isCorrect, timestamp, attempts, wrong, correct } }
+    answersLog: {},
     favorites: new Set(),
     unlocked: new Set(), // answered questions re-opened for another attempt
     justAnsweredId: null,
     shuffleRank: new Map(),
+    globalStats: {}, // { questionId: [attempts, wrong] } across all users
+    auth: null, // { login, token }
+    outbox: [], // events not yet delivered to the server
+    syncStatus: 'local', // 'local' | 'syncing' | 'ok' | 'error'
     stats: {
       correct: 0,
       wrong: 0,
@@ -51,50 +180,18 @@
     }
   };
 
-  // Tag Metadata Definitions (Labels & Categories)
-  const TAG_GROUPS = [
-    { id: 'traffic', label: 'Дорожные ситуации' },
-    { id: 'rules', label: 'Правила движения' },
-    { id: 'elements', label: 'Знаки и разметка' },
-    { id: 'tech', label: 'Техника, медицина, право' },
-    { id: 'special', label: 'Особые темы' }
-  ];
-
-  const TAG_DEFINITIONS = [
-    { id: 'numbers', label: 'Числа и цифры', group: 'special', desc: 'Вопросы со скоростями, метрами, сроками и процентами' },
-    { id: 'pedestrians', label: 'Пешеходы и переходы', group: 'traffic', desc: 'Зебры, уступить дорогу, слепые пешеходы' },
-    { id: 'tram_adjuster', label: 'Трамваи и регулировщик', group: 'traffic', desc: 'Трамвайные пути, жезлы, сигналы регулировщика' },
-    { id: 'intersections', label: 'Перекрестки', group: 'traffic', desc: 'Главная дорога, помеха справа, круговое движение' },
-    { id: 'parking', label: 'Остановка и стоянка', group: 'rules', desc: 'По четным/нечетным, метры до остановок, знаки парковки' },
-    { id: 'speed', label: 'Скоростной режим', group: 'rules', desc: 'Ограничения в городе, за городом, автомагистраль' },
-    { id: 'distance', label: 'Дистанция и интервал', group: 'rules', desc: 'Метры, безопасная дистанция, время реакции' },
-    { id: 'overtaking', label: 'Обгон и разъезд', group: 'rules', desc: 'Выезд на встречную, опережение, узкие участки' },
-    { id: 'maneuvering', label: 'Маневрирование', group: 'rules', desc: 'Повороты, развороты, перестроения, поворотники' },
-    { id: 'signs', label: 'Дорожные знаки', group: 'elements', desc: 'Предупреждающие, запрещающие, предписывающие' },
-    { id: 'markings', label: 'Дорожная разметка', group: 'elements', desc: 'Сплошные, прерывистые, стоп-линии, стрелки' },
-    { id: 'malfunctions', label: 'Неисправности авто', group: 'tech', desc: 'Люфты, глубина протектора, фары, стеклоочистители' },
-    { id: 'medicine', label: 'Первая помощь', group: 'tech', desc: 'Жгуты, сердечно-легочная реанимация, кровотечения' },
-    { id: 'law_duties', label: 'Штрафы и законы', group: 'tech', desc: 'Лишение прав, ОСАГО, оформление ДТП, документы' },
-    { id: 'towing', label: 'Буксировка и прицепы', group: 'special', desc: 'Сцепка, масса прицепа, буксировка в гололед' },
-    { id: 'railway', label: 'Ж/Д переезды', group: 'special', desc: 'Дистанция до шлагбаума и рельсов, запреты' },
-    { id: 'highway', label: 'Автомагистрали', group: 'special', desc: 'Въезд, остановка на обочине, минимальная скорость' },
-    { id: 'tricky', label: 'Вопросы-ловушки', group: 'special', desc: 'Сложные вопросы с высоким процентом ошибок' },
-    // Media tags are handled by the dedicated "Тип вопроса" control
-    { id: 'has_image', label: 'С картинкой', group: 'media', desc: 'Ситуации с графическими дорожными картинками' },
-    { id: 'text_only', label: 'Без картинки', group: 'media', desc: 'Чисто теоретические текстовые вопросы' }
-  ];
-
-  const TAG_BY_ID = new Map(TAG_DEFINITIONS.map((t) => [t.id, t]));
-
-  const STATUS_LABELS = { new: 'Новые', wrong: 'Мои ошибки', correct: 'Верные', favorites: 'Избранное' };
+  const STATUS_LABELS = { new: 'Новые', wrong: 'Ошибки сейчас', ever_wrong: 'Были ошибки', correct: 'Верные', favorites: 'Избранное' };
   const MEDIA_LABELS = { image: 'С картинкой', text: 'Без картинки' };
   const ANSWERS_LABELS = { 2: '2 варианта', 3: '3 варианта', 4: '4+ варианта' };
   const BLOCK_LABELS = { 1: 'Вопросы 1–5', 2: 'Вопросы 6–10', 3: 'Вопросы 11–15', 4: 'Вопросы 16–20' };
+  const ORDER_LABELS = { shuffle: 'Вперемешку', hard: 'Сначала сложные', mistakes: 'Сначала мои ошибки' };
 
   // LocalStorage Persistence Keys
   const STORAGE_KEY_ANSWERS = 'pdd_smart_answers_v1';
   const STORAGE_KEY_FAVS = 'pdd_smart_favs_v1';
-  const STORAGE_KEY_FILTERS = 'pdd_smart_filters_v2';
+  const STORAGE_KEY_FILTERS = 'pdd_smart_filters_v3';
+  const STORAGE_KEY_AUTH = 'pdd_auth_v1';
+  const STORAGE_KEY_OUTBOX = 'pdd_outbox_v1';
   const STORAGE_KEY_THEME = 'pdd_theme';
 
   // ---------------------------------------------------------------------------
@@ -154,10 +251,31 @@
     }
   }
 
-  // Precompute search corpora once
+  function storageRemove(key) {
+    try {
+      localStorage.removeItem(key);
+    } catch (_) {
+      // ignore
+    }
+  }
+
+  function readJson(key, fallback) {
+    try {
+      const raw = storageGet(key);
+      return raw ? JSON.parse(raw) : fallback;
+    } catch (_) {
+      return fallback;
+    }
+  }
+
+  // Precompute search corpora once; questions without AI tags get neutral defaults
   state.questions.forEach((q) => {
+    q.ai = Object.assign({
+      topics: [], format: null, memorize_number: false, number_kind: null, number_value: null,
+      difficulty: 2, trap: false, trap_reason: null, involves: [], key_fact: null, error_rate: null
+    }, q.ai || {});
     q._searchMain = normalizeText(q.title + ' ' + q.answers.join(' '));
-    q._searchExpl = normalizeText(stripHtml(q.explanation || ''));
+    q._searchExpl = normalizeText(stripHtml(q.explanation || '') + ' ' + (q.ai.key_fact || ''));
     q._global = globalNumber(q);
   });
 
@@ -165,118 +283,69 @@
   const QUESTION_BY_ID = new Map(state.questions.map((q) => [q.id, q]));
 
   // ---------------------------------------------------------------------------
-  // Persistence (LocalStorage + optional backend API sync)
+  // Persistence (LocalStorage + server account sync)
   // ---------------------------------------------------------------------------
 
+  // Older logs only stored the last answer — derive counters from it
+  function normalizeLogEntry(l) {
+    if (!l || typeof l !== 'object') return null;
+    const isCorrect = !!l.isCorrect;
+    return {
+      selectedIndex: Number(l.selectedIndex) || 0,
+      isCorrect,
+      timestamp: Number(l.timestamp) || 0,
+      attempts: Number(l.attempts) || 1,
+      wrong: l.wrong !== undefined ? Number(l.wrong) || 0 : (isCorrect ? 0 : 1),
+      correct: l.correct !== undefined ? Number(l.correct) || 0 : (isCorrect ? 1 : 0)
+    };
+  }
+
   function loadLocalState() {
-    try {
-      const savedAnswers = storageGet(STORAGE_KEY_ANSWERS);
-      if (savedAnswers) {
-        const parsed = JSON.parse(savedAnswers);
-        if (parsed && typeof parsed === 'object') state.answersLog = parsed;
+    const savedAnswers = readJson(STORAGE_KEY_ANSWERS, {});
+    if (savedAnswers && typeof savedAnswers === 'object') {
+      for (const id in savedAnswers) {
+        const entry = normalizeLogEntry(savedAnswers[id]);
+        if (entry && QUESTION_BY_ID.has(id)) state.answersLog[id] = entry;
       }
-      const savedFavs = storageGet(STORAGE_KEY_FAVS);
-      if (savedFavs) {
-        const parsed = JSON.parse(savedFavs);
-        if (Array.isArray(parsed)) state.favorites = new Set(parsed);
-      }
-      const savedFilters = storageGet(STORAGE_KEY_FILTERS);
-      if (savedFilters) {
-        const f = JSON.parse(savedFilters);
-        if (f && typeof f === 'object') {
-          const valid = (v, allowed) => (allowed.includes(v) ? v : undefined);
-          state.filters.tickets = new Set((f.tickets || []).filter((t) => t >= 1 && t <= TICKETS_COUNT));
-          state.filters.tags = new Set((f.tags || []).filter((t) => TAG_BY_ID.has(t) && TAG_BY_ID.get(t).group !== 'media'));
-          state.filters.tagMode = valid(f.tagMode, ['and', 'or']) || DEFAULT_FILTERS.tagMode;
-          state.filters.status = valid(f.status, ['all', 'new', 'wrong', 'correct', 'favorites']) || DEFAULT_FILTERS.status;
-          state.filters.media = valid(f.media, ['all', 'image', 'text']) || DEFAULT_FILTERS.media;
-          state.filters.answers = valid(f.answers, ['all', '2', '3', '4']) || DEFAULT_FILTERS.answers;
-          state.filters.block = valid(f.block, ['all', '1', '2', '3', '4']) || DEFAULT_FILTERS.block;
-          state.filters.order = valid(f.order, ['seq', 'shuffle']) || DEFAULT_FILTERS.order;
-          state.filters.searchInExplanation = f.searchInExplanation !== false;
-        }
-      }
-    } catch (e) {
-      console.warn('Persistence load error:', e);
+    }
+    const savedFavs = readJson(STORAGE_KEY_FAVS, []);
+    if (Array.isArray(savedFavs)) state.favorites = new Set(savedFavs);
+
+    const auth = readJson(STORAGE_KEY_AUTH, null);
+    if (auth && auth.token && auth.login) state.auth = auth;
+    const outbox = readJson(STORAGE_KEY_OUTBOX, []);
+    if (Array.isArray(outbox)) state.outbox = outbox;
+
+    const f = readJson(STORAGE_KEY_FILTERS, null);
+    if (f && typeof f === 'object') {
+      const valid = (v, allowed) => (allowed.includes(v) ? v : undefined);
+      const known = (list, items) => new Set((list || []).filter((v) => items.some(([id]) => id === v)));
+      state.filters.tickets = new Set((f.tickets || []).filter((t) => t >= 1 && t <= TICKETS_COUNT));
+      CHIP_FACETS.forEach((facet) => { state.filters[facet.id] = known(f[facet.id], facet.items); });
+      state.filters.topicMode = valid(f.topicMode, ['and', 'or']) || DEFAULT_FILTERS.topicMode;
+      state.filters.status = valid(f.status, ['all', 'new', 'wrong', 'ever_wrong', 'correct', 'favorites']) || DEFAULT_FILTERS.status;
+      state.filters.difficulty = valid(f.difficulty, ['all', '1', '2', '3']) || DEFAULT_FILTERS.difficulty;
+      state.filters.media = valid(f.media, ['all', 'image', 'text']) || DEFAULT_FILTERS.media;
+      state.filters.answers = valid(f.answers, ['all', '2', '3', '4']) || DEFAULT_FILTERS.answers;
+      state.filters.block = valid(f.block, ['all', '1', '2', '3', '4']) || DEFAULT_FILTERS.block;
+      state.filters.order = valid(f.order, ['seq', 'shuffle', 'hard', 'mistakes']) || DEFAULT_FILTERS.order;
+      state.filters.searchInExplanation = f.searchInExplanation !== false;
     }
     recalcStats();
   }
 
-  async function syncWithBackend() {
-    // Only meaningful when served by server.py (not from file:// or static hosting)
-    if (!/^https?:$/.test(window.location.protocol)) return;
-    try {
-      const resp = await fetch('/api/progress', { cache: 'no-store' });
-      if (!resp.ok) return;
-      const remote = await resp.json();
-      let changed = false;
-
-      if (remote.answersLog && typeof remote.answersLog === 'object') {
-        for (const id in remote.answersLog) {
-          const r = remote.answersLog[id];
-          const l = state.answersLog[id];
-          if (!QUESTION_BY_ID.has(id) || !r) continue;
-          // Newer answer wins
-          if (!l || (r.timestamp || 0) > (l.timestamp || 0)) {
-            state.answersLog[id] = r;
-            changed = true;
-          }
-        }
-      }
-      if (Array.isArray(remote.favorites)) {
-        remote.favorites.forEach((id) => {
-          if (QUESTION_BY_ID.has(id) && !state.favorites.has(id)) {
-            state.favorites.add(id);
-            changed = true;
-          }
-        });
-      }
-
-      if (changed) {
-        storageSet(STORAGE_KEY_ANSWERS, JSON.stringify(state.answersLog));
-        storageSet(STORAGE_KEY_FAVS, JSON.stringify([...state.favorites]));
-        recalcStats();
-        renderTicketsGrid();
-        applyFilters({ keepCurrent: true });
-      }
-    } catch (_) {
-      // Backend not running — local storage is used seamlessly
-    }
-  }
-
-  let backendSaveTimer = null;
-
-  function savePersistedState() {
+  function saveLocalProgress() {
     storageSet(STORAGE_KEY_ANSWERS, JSON.stringify(state.answersLog));
     storageSet(STORAGE_KEY_FAVS, JSON.stringify([...state.favorites]));
-
-    if (!/^https?:$/.test(window.location.protocol)) return;
-    clearTimeout(backendSaveTimer);
-    backendSaveTimer = setTimeout(() => {
-      fetch('/api/progress', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          answersLog: state.answersLog,
-          favorites: [...state.favorites]
-        })
-      }).catch(() => {});
-    }, 400);
   }
 
   function saveFilters() {
     const f = state.filters;
-    storageSet(STORAGE_KEY_FILTERS, JSON.stringify({
-      tickets: [...f.tickets],
-      tags: [...f.tags],
-      tagMode: f.tagMode,
-      status: f.status,
-      media: f.media,
-      answers: f.answers,
-      block: f.block,
-      order: f.order,
-      searchInExplanation: f.searchInExplanation
-    }));
+    const out = {};
+    for (const key in DEFAULT_FILTERS) {
+      out[key] = f[key] instanceof Set ? [...f[key]] : f[key];
+    }
+    storageSet(STORAGE_KEY_FILTERS, JSON.stringify(out));
   }
 
   function recalcStats() {
@@ -296,6 +365,196 @@
     updateStatsHeader();
   }
 
+  // --- Server API -------------------------------------------------------------
+
+  async function api(path, options = {}) {
+    const headers = { 'Content-Type': 'application/json' };
+    if (state.auth) headers.Authorization = 'Bearer ' + state.auth.token;
+    const resp = await fetch(API_BASE + path, {
+      method: options.body ? 'POST' : 'GET',
+      headers,
+      body: options.body ? JSON.stringify(options.body) : undefined,
+      cache: 'no-store'
+    });
+    let data = null;
+    try {
+      data = await resp.json();
+    } catch (_) {
+      // non-JSON error page
+    }
+    if (!resp.ok) {
+      const err = new Error((data && data.error) || `HTTP ${resp.status}`);
+      err.status = resp.status;
+      throw err;
+    }
+    return data;
+  }
+
+  function queueEvent(ev) {
+    if (!state.auth) return;
+    state.outbox.push(ev);
+    storageSet(STORAGE_KEY_OUTBOX, JSON.stringify(state.outbox));
+    scheduleFlush();
+  }
+
+  let flushTimer = null;
+  let flushing = false;
+
+  function scheduleFlush(delay = 400) {
+    clearTimeout(flushTimer);
+    flushTimer = setTimeout(flushOutbox, delay);
+  }
+
+  async function flushOutbox() {
+    if (!state.auth || flushing) return;
+    if (state.outbox.length === 0) return;
+    flushing = true;
+    setSyncStatus('syncing');
+    const batch = state.outbox.slice(0, 2000);
+    try {
+      const res = await api('events', { body: { events: batch } });
+      state.outbox = state.outbox.slice(batch.length);
+      storageSet(STORAGE_KEY_OUTBOX, JSON.stringify(state.outbox));
+      // Only trust the server snapshot when nothing new happened meanwhile
+      if (state.outbox.length === 0 && res && res.progress) applyServerProgress(res.progress);
+      setSyncStatus('ok');
+    } catch (e) {
+      handleSyncError(e);
+    } finally {
+      flushing = false;
+      if (state.auth && state.outbox.length > 0 && state.syncStatus === 'ok') scheduleFlush(50);
+    }
+  }
+
+  async function pullProgress() {
+    if (!state.auth) return;
+    if (state.outbox.length > 0) {
+      flushOutbox();
+      return;
+    }
+    setSyncStatus('syncing');
+    try {
+      const progress = await api('progress');
+      if (state.outbox.length === 0) applyServerProgress(progress);
+      setSyncStatus('ok');
+    } catch (e) {
+      handleSyncError(e);
+    }
+  }
+
+  function handleSyncError(e) {
+    if (e && e.status === 401) {
+      // Session is gone on the server — keep local data, ask to log in again
+      state.auth = null;
+      storageRemove(STORAGE_KEY_AUTH);
+      setSyncStatus('local');
+      renderAccount();
+      return;
+    }
+    setSyncStatus('error');
+    // Retry later (offline, server restart)
+    clearTimeout(flushTimer);
+    flushTimer = setTimeout(flushOutbox, 15000);
+  }
+
+  function applyServerProgress(p) {
+    if (!p || typeof p !== 'object') return;
+    const log = {};
+    const questions = p.questions || {};
+    for (const id in questions) {
+      if (!QUESTION_BY_ID.has(id)) continue;
+      const r = questions[id];
+      log[id] = {
+        selectedIndex: r.sel,
+        isCorrect: !!r.ok,
+        timestamp: r.ts,
+        attempts: r.attempts,
+        wrong: r.wrong,
+        correct: r.correct
+      };
+    }
+    state.answersLog = log;
+    state.favorites = new Set((p.favorites || []).filter((id) => QUESTION_BY_ID.has(id)));
+    saveLocalProgress();
+    recalcStats();
+    renderTicketsGrid();
+    applyFilters({ keepCurrent: true });
+  }
+
+  // Turns locally stored progress into server events (used on first login)
+  function localProgressEvents() {
+    const events = [];
+    for (const id in state.answersLog) {
+      const q = QUESTION_BY_ID.get(id);
+      const l = state.answersLog[id];
+      if (!q || !l) continue;
+      const ts = l.timestamp || Date.now();
+      const wrongSel = l.isCorrect ? (q.correct + 1) % q.answers.length : l.selectedIndex;
+      // Earlier attempts get distinct, deterministic timestamps so re-uploads dedupe
+      let k = 1;
+      for (let i = 0; i < l.correct - (l.isCorrect ? 1 : 0); i++) {
+        events.push({ type: 'answer', qid: id, sel: q.correct, ok: true, ts: ts - k++ });
+      }
+      for (let i = 0; i < l.wrong - (l.isCorrect ? 0 : 1); i++) {
+        events.push({ type: 'answer', qid: id, sel: wrongSel, ok: false, ts: ts - k++ });
+      }
+      events.push({ type: 'answer', qid: id, sel: l.selectedIndex, ok: l.isCorrect, ts });
+    }
+    state.favorites.forEach((id) => events.push({ type: 'fav', qid: id, on: true, ts: Date.now() }));
+    return events;
+  }
+
+  async function doLogin(login) {
+    const res = await api('login', { body: { login } });
+    state.auth = { login: res.login, token: res.token };
+    storageSet(STORAGE_KEY_AUTH, JSON.stringify(state.auth));
+    // Local progress made before logging in is merged into the account
+    state.outbox = localProgressEvents().concat(state.outbox);
+    storageSet(STORAGE_KEY_OUTBOX, JSON.stringify(state.outbox));
+    renderAccount();
+    if (state.outbox.length > 0) {
+      await flushOutbox();
+    } else {
+      await pullProgress();
+    }
+  }
+
+  function doLogout() {
+    if (!confirm('Выйти из аккаунта? Прогресс останется на сервере, а на этом устройстве будет очищен.')) return;
+    state.auth = null;
+    state.outbox = [];
+    state.answersLog = {};
+    state.favorites = new Set();
+    state.unlocked.clear();
+    storageRemove(STORAGE_KEY_AUTH);
+    storageRemove(STORAGE_KEY_OUTBOX);
+    saveLocalProgress();
+    setSyncStatus('local');
+    recalcStats();
+    renderTicketsGrid();
+    renderAccount();
+    applyFilters({ keepCurrent: true });
+    closeModal();
+  }
+
+  async function loadGlobalStats() {
+    try {
+      const data = await api('global-stats');
+      if (data && typeof data === 'object') {
+        state.globalStats = data;
+        renderFacetCounts(buildPredicates());
+      }
+    } catch (_) {
+      // Backend unavailable — the "everyone errs" pick just stays empty
+    }
+  }
+
+  function globalErrorRate(q) {
+    const s = state.globalStats[q.id];
+    if (!s || s[0] < 3) return null;
+    return s[1] / s[0];
+  }
+
   // ---------------------------------------------------------------------------
   // DOM Elements Cache
   // ---------------------------------------------------------------------------
@@ -304,17 +563,22 @@
 
   function initDOMElements() {
     const ids = [
-      'tagsContainer', 'ticketsGrid', 'searchInput', 'btnClearSearch', 'searchInExplanation',
+      'tagsContainer', 'quickContainer', 'numbersContainer', 'formatsContainer', 'involvesContainer',
+      'ticketsGrid', 'searchInput', 'btnClearSearch', 'searchInExplanation',
       'resultsCount', 'resultsProgress', 'activeFilters', 'questionNavStrip', 'questionCard',
       'emptyState', 'emptyTitle', 'emptyDesc', 'btnEmptyReset',
       'statCorrect', 'statWrong', 'statTotal', 'statProgress',
       'btnPrev', 'btnNext', 'btnFavorite', 'btnFavoriteLabel', 'btnRetry',
       'btnResetFilters', 'btnResetStats', 'btnClearTickets',
-      'statusGroup', 'statusHint', 'tagModeGroup', 'mediaGroup', 'answersGroup', 'blockGroup', 'orderGroup',
+      'statusGroup', 'statusHint', 'tagModeGroup', 'difficultyGroup', 'mediaGroup', 'answersGroup',
+      'blockGroup', 'orderGroup',
       'qMetaId', 'qPosition', 'qMetaTags', 'qTitle', 'qImageWrapper', 'qImage', 'qImageError', 'btnZoom',
-      'qAnswersList', 'qExplanation', 'qExplanationHeading', 'qExplanationText',
+      'qAnswersList', 'qExplanation', 'qExplanationHeading', 'qExplanationText', 'qInsights',
       'btnTheme', 'btnOpenFilters', 'btnCloseFilters', 'btnApplyFilters', 'filterPanel', 'drawerOverlay', 'filtersDot',
-      'lightbox', 'lightboxImg', 'btnLogo'
+      'lightbox', 'lightboxImg', 'btnLogo',
+      'btnAccount', 'accountLabel', 'accountDot', 'accountCard',
+      'modal', 'modalLogin', 'modalAccount', 'loginForm', 'loginInput', 'loginError', 'btnLoginSubmit',
+      'accountName', 'accountSync', 'btnLogout', 'btnSyncNow'
     ];
     ids.forEach((id) => {
       elements[id] = document.getElementById(id);
@@ -330,6 +594,32 @@
     return q ? q.split(' ').filter(Boolean) : [];
   }
 
+  function quickMatches(q, v) {
+    const log = state.answersLog[q.id];
+    switch (v) {
+      case 'memorize': return q.ai.memorize_number;
+      case 'trap': return q.ai.trap;
+      case 'my_repeat': return !!log && log.wrong >= 2;
+      case 'stale': return !!log && Date.now() - (log.timestamp || 0) > 7 * DAY_MS;
+      case 'global_hard': {
+        const rate = globalErrorRate(q);
+        return rate !== null && rate >= 0.4;
+      }
+      default: return true;
+    }
+  }
+
+  function facetMatches(facet, q, values) {
+    if (values.size === 0) return true;
+    const mode = typeof facet.combine === 'function' ? facet.combine() : facet.combine;
+    if (mode === 'and') {
+      for (const v of values) if (!facet.match(q, v)) return false;
+      return true;
+    }
+    for (const v of values) if (facet.match(q, v)) return true;
+    return false;
+  }
+
   /**
    * Builds a predicate for every filter dimension so that counts can be
    * calculated "as if" one dimension were not applied (faceted search).
@@ -338,7 +628,7 @@
     const f = state.filters;
     const tokens = getSearchTokens();
 
-    return {
+    const preds = {
       tickets: (q) => f.tickets.size === 0 || f.tickets.has(q.ticket),
       block: (q) => f.block === 'all' || blockOf(q) === f.block,
       media: (q) => {
@@ -351,14 +641,18 @@
         const n = q.answers.length;
         return f.answers === '4' ? n >= 4 : n === Number(f.answers);
       },
+      difficulty: (q) => f.difficulty === 'all' || String(q.ai.difficulty) === f.difficulty,
       status: (q) => statusMatches(q, f.status),
-      tags: (q) => tagsMatch(q, f.tags, f.tagMode),
       search: (q) => {
         if (tokens.length === 0) return true;
         const corpus = f.searchInExplanation ? q._searchMain + ' ' + q._searchExpl : q._searchMain;
         return tokens.every((t) => corpus.includes(t));
       }
     };
+    CHIP_FACETS.forEach((facet) => {
+      preds[facet.id] = (q) => facetMatches(facet, q, f[facet.id]);
+    });
+    return preds;
   }
 
   function statusMatches(q, status) {
@@ -366,21 +660,11 @@
     switch (status) {
       case 'new': return !log;
       case 'wrong': return !!log && !log.isCorrect;
+      case 'ever_wrong': return !!log && log.wrong > 0;
       case 'correct': return !!log && log.isCorrect;
       case 'favorites': return state.favorites.has(q.id);
       default: return true;
     }
-  }
-
-  function tagsMatch(q, tags, mode) {
-    if (tags.size === 0) return true;
-    const qTags = q.tags || [];
-    if (mode === 'or') {
-      for (const t of tags) if (qTags.includes(t)) return true;
-      return false;
-    }
-    for (const t of tags) if (!qTags.includes(t)) return false;
-    return true;
   }
 
   function passesAll(q, preds, skip) {
@@ -390,6 +674,33 @@
     return true;
   }
 
+  function hardness(q) {
+    const rate = globalErrorRate(q);
+    // AI-estimated error rate (0–100), boosted by real error statistics when available
+    const estimate = q.ai.error_rate !== null ? q.ai.error_rate : q.ai.difficulty * 25;
+    return estimate + (q.ai.trap ? 10 : 0) + (rate === null ? 0 : rate * 50);
+  }
+
+  function sortList(list) {
+    const order = state.filters.order;
+    if (order === 'shuffle') {
+      ensureShuffleRank();
+      return list.slice().sort((a, b) => state.shuffleRank.get(a.id) - state.shuffleRank.get(b.id));
+    }
+    if (order === 'hard') {
+      return list.slice().sort((a, b) => hardness(b) - hardness(a) || a._global - b._global);
+    }
+    if (order === 'mistakes') {
+      const key = (q) => {
+        const l = state.answersLog[q.id];
+        if (!l) return -1;
+        return l.wrong * 2 + (l.isCorrect ? 0 : 1);
+      };
+      return list.slice().sort((a, b) => key(b) - key(a) || a._global - b._global);
+    }
+    return list;
+  }
+
   function applyFilters(options = {}) {
     const { keepCurrent = false, targetId = null } = options;
     const prevId = targetId || (keepCurrent && state.filteredQuestions[state.currentIndex]
@@ -397,17 +708,11 @@
       : null);
 
     const preds = buildPredicates();
-    let list = state.questions.filter((q) => passesAll(q, preds));
-
-    if (state.filters.order === 'shuffle') {
-      ensureShuffleRank();
-      list = list.slice().sort((a, b) => state.shuffleRank.get(a.id) - state.shuffleRank.get(b.id));
-    }
-
+    const list = sortList(state.questions.filter((q) => passesAll(q, preds)));
     state.filteredQuestions = list;
 
-    // In "Мои ошибки" mode wrong questions are opened for another attempt
-    if (state.filters.status === 'wrong') {
+    // In mistake modes wrong questions are opened for another attempt
+    if (state.filters.status === 'wrong' || state.filters.status === 'ever_wrong') {
       list.forEach((q) => state.unlocked.add(q.id));
     }
 
@@ -432,12 +737,12 @@
 
   function hasActiveFilters() {
     const f = state.filters;
-    return f.tickets.size > 0 || f.tags.size > 0 || f.status !== 'all' || f.media !== 'all' ||
-      f.answers !== 'all' || f.block !== 'all' || state.searchQuery.trim() !== '';
+    return SET_FILTERS.some((k) => f[k].size > 0) || f.status !== 'all' || f.media !== 'all' ||
+      f.answers !== 'all' || f.block !== 'all' || f.difficulty !== 'all' || state.searchQuery.trim() !== '';
   }
 
   // ---------------------------------------------------------------------------
-  // Rendering — header stats
+  // Rendering — header stats & account
   // ---------------------------------------------------------------------------
 
   function updateStatsHeader() {
@@ -451,90 +756,112 @@
     elements.statProgress.parentElement.title = `Пройдено ${pct}%`;
   }
 
+  const SYNC_TEXT = {
+    local: 'Прогресс хранится только в этом браузере',
+    syncing: 'Синхронизация…',
+    ok: 'Прогресс сохранен на сервере',
+    error: 'Нет связи с сервером — ответы сохранятся позже'
+  };
+
+  function setSyncStatus(status) {
+    state.syncStatus = status;
+    renderAccount();
+  }
+
+  function renderAccount() {
+    if (!elements.btnAccount) return;
+    const auth = state.auth;
+    elements.accountLabel.textContent = auth ? auth.login : 'Войти';
+    elements.btnAccount.classList.toggle('logged-in', !!auth);
+    elements.btnAccount.title = auth ? `${auth.login}: ${SYNC_TEXT[state.syncStatus]}` : 'Войти, чтобы сохранять прогресс на сервере';
+    elements.accountDot.dataset.status = auth ? state.syncStatus : 'local';
+    elements.accountCard.hidden = !!auth;
+    elements.accountName.textContent = auth ? auth.login : '';
+    elements.accountSync.textContent = SYNC_TEXT[auth ? state.syncStatus : 'local'] +
+      (auth && state.outbox.length ? ` (в очереди: ${state.outbox.length})` : '');
+    elements.accountSync.dataset.status = auth ? state.syncStatus : 'local';
+  }
+
   // ---------------------------------------------------------------------------
   // Rendering — sidebar
   // ---------------------------------------------------------------------------
 
-  function renderTagsList() {
-    const container = elements.tagsContainer;
-    container.innerHTML = '';
-
-    TAG_GROUPS.forEach((group) => {
-      const defs = TAG_DEFINITIONS.filter((t) => t.group === group.id);
-      if (defs.length === 0) return;
-
-      const wrap = document.createElement('div');
-      wrap.className = 'tag-group';
-      const title = document.createElement('div');
-      title.className = 'tag-group-title';
-      title.textContent = group.label;
-      const grid = document.createElement('div');
-      grid.className = 'tag-grid';
-
-      defs.forEach((tagDef) => {
+  function renderChipFacets() {
+    CHIP_FACETS.forEach((facet) => {
+      const container = elements[facet.container];
+      if (!container) return;
+      container.innerHTML = '';
+      facet.items.forEach(([id, label, desc]) => {
         const chip = document.createElement('button');
         chip.type = 'button';
         chip.className = 'chip-btn';
-        chip.dataset.tag = tagDef.id;
-        chip.title = tagDef.desc;
-        chip.innerHTML = `<span>${escapeHtml(tagDef.label)}</span><span class="chip-count"></span>`;
-        chip.addEventListener('click', () => toggleTag(tagDef.id));
-        grid.appendChild(chip);
+        chip.dataset.facet = facet.id;
+        chip.dataset.value = id;
+        if (desc) chip.title = desc;
+        chip.innerHTML = `<span>${escapeHtml(label)}</span><span class="chip-count"></span>`;
+        chip.addEventListener('click', () => toggleFacetValue(facet.id, id));
+        container.appendChild(chip);
       });
-
-      wrap.appendChild(title);
-      wrap.appendChild(grid);
-      container.appendChild(wrap);
     });
   }
 
-  function toggleTag(tagId) {
-    if (state.filters.tags.has(tagId)) {
-      state.filters.tags.delete(tagId);
+  function toggleFacetValue(facetId, value) {
+    const set = state.filters[facetId];
+    if (set.has(value)) {
+      set.delete(value);
     } else {
-      state.filters.tags.add(tagId);
+      set.add(value);
     }
-    applyFilters();
+    applyFilters({ keepCurrent: true });
   }
 
   // Facet counts: how many questions each option would yield with the other filters applied
   function renderFacetCounts(preds) {
     const f = state.filters;
 
-    // Tag chips
-    const baseForTags = state.questions.filter((q) => passesAll(q, preds, 'tags'));
-    elements.tagsContainer.querySelectorAll('.chip-btn').forEach((chip) => {
-      const tagId = chip.dataset.tag;
-      const active = f.tags.has(tagId);
-      let count;
-      if (f.tagMode === 'and') {
-        const combined = new Set(f.tags);
-        combined.add(tagId);
-        count = baseForTags.filter((q) => tagsMatch(q, combined, 'and')).length;
-      } else {
-        count = baseForTags.filter((q) => (q.tags || []).includes(tagId)).length;
-      }
-      chip.classList.toggle('active', active);
-      chip.classList.toggle('dim', !active && count === 0);
-      chip.setAttribute('aria-pressed', active ? 'true' : 'false');
-      chip.querySelector('.chip-count').textContent = count;
+    CHIP_FACETS.forEach((facet) => {
+      const container = elements[facet.container];
+      if (!container) return;
+      const base = state.questions.filter((q) => passesAll(q, preds, facet.id));
+      const mode = typeof facet.combine === 'function' ? facet.combine() : facet.combine;
+      container.querySelectorAll('.chip-btn').forEach((chip) => {
+        const value = chip.dataset.value;
+        const active = f[facet.id].has(value);
+        let count;
+        if (mode === 'and') {
+          const combined = new Set(f[facet.id]);
+          combined.add(value);
+          count = base.filter((q) => facetMatches(facet, q, combined)).length;
+        } else {
+          count = base.filter((q) => facet.match(q, value)).length;
+        }
+        chip.classList.toggle('active', active);
+        chip.classList.toggle('dim', !active && count === 0);
+        chip.setAttribute('aria-pressed', active ? 'true' : 'false');
+        chip.querySelector('.chip-count').textContent = count;
+      });
     });
 
-    // Status counts
-    const baseForStatus = state.questions.filter((q) => passesAll(q, preds, 'status'));
-    ['all', 'new', 'wrong', 'correct', 'favorites'].forEach((status) => {
-      const el = elements.statusGroup.querySelector(`[data-count="${status}"]`);
-      if (el) el.textContent = baseForStatus.filter((q) => statusMatches(q, status)).length;
-    });
+    // Segmented counts
+    const segCounts = (group, dim, values, test) => {
+      const base = state.questions.filter((q) => passesAll(q, preds, dim));
+      values.forEach((v) => {
+        const el = group.querySelector(`[data-count="${v}"]`);
+        if (el) el.textContent = base.filter((q) => test(q, v)).length;
+      });
+    };
+    segCounts(elements.statusGroup, 'status', ['all', 'new', 'wrong', 'ever_wrong', 'correct', 'favorites'], statusMatches);
+    segCounts(elements.difficultyGroup, 'difficulty', ['1', '2', '3'], (q, v) => String(q.ai.difficulty) === v);
 
     // Segmented controls state
     syncSegmented(elements.statusGroup, f.status);
-    syncSegmented(elements.tagModeGroup, f.tagMode);
+    syncSegmented(elements.tagModeGroup, f.topicMode);
+    syncSegmented(elements.difficultyGroup, f.difficulty);
     syncSegmented(elements.mediaGroup, f.media);
     syncSegmented(elements.answersGroup, f.answers);
     syncSegmented(elements.blockGroup, f.block);
     syncSegmented(elements.orderGroup, f.order);
-    elements.statusHint.hidden = f.status !== 'wrong';
+    elements.statusHint.hidden = f.status !== 'wrong' && f.status !== 'ever_wrong';
     elements.searchInExplanation.checked = f.searchInExplanation;
 
     // Tickets
@@ -653,6 +980,25 @@
     if (f.status !== 'all') {
       add(STATUS_LABELS[f.status], () => setStatus('all'));
     }
+    if (f.difficulty !== 'all') {
+      add(`Сложность: ${DIFFICULTY_LABELS[f.difficulty].toLowerCase()}`, () => { f.difficulty = 'all'; applyFilters(); });
+    }
+    CHIP_FACETS.forEach((facet) => {
+      const labels = Object.fromEntries(facet.items.map(([id, label]) => [id, label]));
+      f[facet.id].forEach((v) => {
+        const prefix = facet.id === 'numberKinds' ? 'Число: ' : '';
+        add(prefix + (labels[v] || v), () => {
+          f[facet.id].delete(v);
+          applyFilters({ keepCurrent: true });
+        });
+      });
+    });
+    if (f.topics.size > 1) {
+      add(f.topicMode === 'and' ? 'Все темы сразу' : 'Любая из тем', () => {
+        f.topicMode = f.topicMode === 'and' ? 'or' : 'and';
+        applyFilters();
+      });
+    }
     if (f.tickets.size > 0) {
       const list = [...f.tickets].sort((a, b) => a - b);
       add(`${list.length > 1 ? 'Билеты' : 'Билет'} №${list.join(', ')}`, () => {
@@ -669,18 +1015,8 @@
     if (f.answers !== 'all') {
       add(ANSWERS_LABELS[f.answers], () => { f.answers = 'all'; applyFilters(); });
     }
-    f.tags.forEach((tagId) => {
-      const def = TAG_BY_ID.get(tagId);
-      add(def ? def.label : tagId, () => {
-        f.tags.delete(tagId);
-        applyFilters();
-      });
-    });
-    if (f.tags.size > 1) {
-      add(f.tagMode === 'and' ? 'Все темы сразу' : 'Любая из тем', () => {
-        f.tagMode = f.tagMode === 'and' ? 'or' : 'and';
-        applyFilters();
-      });
+    if (f.order !== 'seq') {
+      add(ORDER_LABELS[f.order], () => { f.order = 'seq'; applyFilters({ keepCurrent: true }); });
     }
 
     if (container.children.length > 1) {
@@ -792,6 +1128,72 @@
   const ICON_CHECK = '<svg class="answer-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>';
   const ICON_CROSS = '<svg class="answer-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>';
 
+  function metaChip(text, cls, title, onClick) {
+    const chip = document.createElement(onClick ? 'button' : 'span');
+    if (onClick) {
+      chip.type = 'button';
+      chip.addEventListener('click', onClick);
+    }
+    chip.className = 'q-tag-chip' + (cls ? ' ' + cls : '');
+    chip.textContent = text;
+    if (title) chip.title = title;
+    return chip;
+  }
+
+  function renderMetaTags(q, locked) {
+    const row = elements.qMetaTags;
+    row.innerHTML = '';
+    const showOnly = (facetId, value) => () => {
+      CHIP_FACETS.forEach((facet) => state.filters[facet.id].clear());
+      state.filters[facetId].add(value);
+      applyFilters({ targetId: q.id });
+    };
+
+    const diff = q.ai.difficulty;
+    row.appendChild(metaChip(DIFFICULTY_LABELS[diff], 'diff-' + diff, 'Показать вопросы этой сложности', () => {
+      state.filters.difficulty = String(diff);
+      applyFilters({ targetId: q.id });
+    }));
+    if (q.ai.trap) {
+      row.appendChild(metaChip('Ловушка', 'tricky',
+        locked && q.ai.trap_reason ? q.ai.trap_reason : 'Будьте внимательны — здесь легко ошибиться', showOnly('quick', 'trap')));
+    }
+    if (q.ai.memorize_number) {
+      row.appendChild(metaChip('Число', 'number', 'Нужно знать конкретную норму', showOnly('quick', 'memorize')));
+    }
+    if (q.ai.format) {
+      row.appendChild(metaChip(FORMAT_LABELS[q.ai.format], 'format', 'Показать вопросы такого типа', showOnly('formats', q.ai.format)));
+    }
+    q.ai.topics.forEach((t) => {
+      row.appendChild(metaChip(TOPIC_LABELS[t] || t, '', `Показать только тему «${TOPIC_LABELS[t] || t}»`, showOnly('topics', t)));
+    });
+    const rate = globalErrorRate(q);
+    if (rate !== null && rate >= 0.25) {
+      row.appendChild(metaChip(`Ошибаются ${Math.round(rate * 100)}%`, 'global', 'Доля ошибок у всех пользователей'));
+    }
+  }
+
+  function renderInsights(q, log) {
+    const box = elements.qInsights;
+    const items = [];
+    if (q.ai.key_fact) {
+      items.push(`<div class="insight"><span class="insight-label">Запомнить</span><span>${escapeHtml(q.ai.key_fact)}</span></div>`);
+    }
+    if (q.ai.memorize_number && q.ai.number_value) {
+      items.push(`<div class="insight"><span class="insight-label">Норма</span><span class="insight-value">${escapeHtml(q.ai.number_value)}</span></div>`);
+    }
+    if (q.ai.trap && q.ai.trap_reason) {
+      items.push(`<div class="insight insight-trap"><span class="insight-label">Подвох</span><span>${escapeHtml(q.ai.trap_reason)}</span></div>`);
+    }
+    if (log && log.attempts > 1) {
+      items.push(`<div class="insight insight-history"><span class="insight-label">Ваша история</span><span>${log.attempts} ${pluralize(log.attempts, 'попытка', 'попытки', 'попыток')}, ошибок: ${log.wrong}</span></div>`);
+    }
+    box.innerHTML = items.length
+      ? items.join('') + '<div class="insight-note">Подсказки сгенерированы ИИ и могут содержать неточности — сверяйтесь с пояснением.</div>'
+      : '';
+    box.hidden = items.length === 0;
+  }
+
   function renderCurrentQuestion(options = {}) {
     const { scroll = false } = options;
     const count = state.filteredQuestions.length;
@@ -800,7 +1202,7 @@
       elements.questionCard.hidden = true;
       elements.emptyState.hidden = false;
       const f = state.filters;
-      if (f.status === 'wrong' && !state.searchQuery && f.tags.size === 0 && f.tickets.size === 0) {
+      if ((f.status === 'wrong' || f.status === 'ever_wrong') && !hasActiveFiltersExceptStatus()) {
         elements.emptyTitle.textContent = 'Ошибок нет';
         elements.emptyDesc.textContent = 'Отлично! Вопросов с ошибками не осталось. Решайте новые вопросы, чтобы пополнить статистику.';
       } else if (f.status === 'favorites' && state.favorites.size === 0) {
@@ -827,25 +1229,10 @@
 
     // Meta row
     elements.qMetaId.textContent = `Билет ${q.ticket} · Вопрос ${q.num}`;
-    elements.qPosition.textContent = `${state.currentIndex + 1} из ${count}`;
-
-    // Tags (click to filter by tag)
-    const tagsRow = elements.qMetaTags;
-    tagsRow.innerHTML = '';
-    (q.tags || []).forEach((t) => {
-      const def = TAG_BY_ID.get(t);
-      if (!def || def.group === 'media') return;
-      const chip = document.createElement('button');
-      chip.type = 'button';
-      chip.className = 'q-tag-chip' + (t === 'tricky' ? ' tricky' : '');
-      chip.textContent = def.label;
-      chip.title = `Показать только тему «${def.label}»`;
-      chip.addEventListener('click', () => {
-        state.filters.tags = new Set([t]);
-        applyFilters({ targetId: q.id });
-      });
-      tagsRow.appendChild(chip);
-    });
+    let position = `${state.currentIndex + 1} из ${count}`;
+    if (log && log.wrong > 0 && !locked) position += ` · ошибок раньше: ${log.wrong}`;
+    elements.qPosition.textContent = position;
+    renderMetaTags(q, locked);
 
     // Title
     elements.qTitle.innerHTML = highlight(q.title, tokens);
@@ -897,6 +1284,7 @@
         ? 'Правильно!'
         : `Ошибка — правильный ответ: ${q.correct + 1}`;
       elements.qExplanationHeading.querySelector('span').textContent = headingText;
+      renderInsights(q, log);
       elements.qExplanationText.innerHTML = q.explanation || 'Пояснение к этому вопросу отсутствует.';
       elements.qExplanationText.querySelectorAll('a').forEach((a) => {
         a.target = '_blank';
@@ -905,6 +1293,7 @@
     } else {
       box.hidden = true;
       elements.qExplanationText.innerHTML = '';
+      elements.qInsights.innerHTML = '';
     }
 
     // Favorite button
@@ -940,6 +1329,12 @@
 
     prefetchNeighbourImages();
     updateHash(q);
+  }
+
+  function hasActiveFiltersExceptStatus() {
+    const f = state.filters;
+    return SET_FILTERS.some((k) => f[k].size > 0) || f.media !== 'all' || f.answers !== 'all' ||
+      f.block !== 'all' || f.difficulty !== 'all' || state.searchQuery.trim() !== '';
   }
 
   function renderImage(q) {
@@ -1005,15 +1400,21 @@
   function handleAnswerSelect(question, selectedIdx) {
     if (isLocked(question)) return;
     const isCorrect = selectedIdx === question.correct;
+    const prev = state.answersLog[question.id];
+    const ts = Date.now();
     state.answersLog[question.id] = {
       selectedIndex: selectedIdx,
       isCorrect: isCorrect,
-      timestamp: Date.now()
+      timestamp: ts,
+      attempts: (prev ? prev.attempts : 0) + 1,
+      wrong: (prev ? prev.wrong : 0) + (isCorrect ? 0 : 1),
+      correct: (prev ? prev.correct : 0) + (isCorrect ? 1 : 0)
     };
     state.unlocked.delete(question.id);
     state.justAnsweredId = question.id;
 
-    savePersistedState();
+    saveLocalProgress();
+    queueEvent({ type: 'answer', qid: question.id, sel: selectedIdx, ok: isCorrect, ts });
     recalcStats();
     renderTicketsGrid();
     renderFacetCounts(buildPredicates());
@@ -1041,12 +1442,14 @@
   function toggleFavorite() {
     if (state.filteredQuestions.length === 0) return;
     const q = state.filteredQuestions[state.currentIndex];
-    if (state.favorites.has(q.id)) {
-      state.favorites.delete(q.id);
-    } else {
+    const on = !state.favorites.has(q.id);
+    if (on) {
       state.favorites.add(q.id);
+    } else {
+      state.favorites.delete(q.id);
     }
-    savePersistedState();
+    saveLocalProgress();
+    queueEvent({ type: 'fav', qid: q.id, on, ts: Date.now() });
     renderFacetCounts(buildPredicates());
     renderCurrentQuestion();
   }
@@ -1067,16 +1470,9 @@
   }
 
   function resetAllFilters() {
-    const f = state.filters;
-    f.tickets.clear();
-    f.tags.clear();
-    f.tagMode = DEFAULT_FILTERS.tagMode;
-    f.status = DEFAULT_FILTERS.status;
-    f.media = DEFAULT_FILTERS.media;
-    f.answers = DEFAULT_FILTERS.answers;
-    f.block = DEFAULT_FILTERS.block;
-    f.order = DEFAULT_FILTERS.order;
-    f.searchInExplanation = DEFAULT_FILTERS.searchInExplanation;
+    const searchInExplanation = state.filters.searchInExplanation;
+    state.filters = freshFilters();
+    state.filters.searchInExplanation = searchInExplanation;
     state.searchQuery = '';
     state.unlocked.clear();
     elements.searchInput.value = '';
@@ -1085,10 +1481,12 @@
   }
 
   function resetProgressStats() {
-    if (!confirm('Сбросить всю историю ответов и статистику? Избранное сохранится.')) return;
+    const where = state.auth ? ' (на сервере тоже)' : '';
+    if (!confirm(`Сбросить всю историю ответов и статистику${where}? Избранное сохранится.`)) return;
     state.answersLog = {};
     state.unlocked.clear();
-    savePersistedState();
+    saveLocalProgress();
+    queueEvent({ type: 'reset', ts: Date.now() });
     recalcStats();
     renderTicketsGrid();
     applyFilters({ keepCurrent: true });
@@ -1168,7 +1566,7 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Mobile filter drawer & lightbox
+  // Mobile filter drawer, lightbox & account modal
   // ---------------------------------------------------------------------------
 
   const drawerQuery = window.matchMedia ? window.matchMedia('(max-width: 1024px)') : null;
@@ -1208,6 +1606,46 @@
     if (!isDrawerOpen()) document.body.classList.remove('no-scroll');
   }
 
+  function openModal() {
+    closeDrawer();
+    const logged = !!state.auth;
+    elements.modalLogin.hidden = logged;
+    elements.modalAccount.hidden = !logged;
+    elements.loginError.hidden = true;
+    elements.modal.hidden = false;
+    document.body.classList.add('no-scroll');
+    renderAccount();
+    if (!logged) setTimeout(() => elements.loginInput.focus(), 30);
+  }
+
+  function closeModal() {
+    elements.modal.hidden = true;
+    if (!isDrawerOpen()) document.body.classList.remove('no-scroll');
+  }
+
+  function isModalOpen() {
+    return !elements.modal.hidden;
+  }
+
+  async function submitLogin(e) {
+    e.preventDefault();
+    const login = elements.loginInput.value.trim();
+    if (!login) return;
+    elements.btnLoginSubmit.disabled = true;
+    elements.loginError.hidden = true;
+    try {
+      await doLogin(login);
+      closeModal();
+    } catch (err) {
+      elements.loginError.textContent = err && err.status
+        ? err.message
+        : 'Сервер недоступен. Попробуйте позже.';
+      elements.loginError.hidden = false;
+    } finally {
+      elements.btnLoginSubmit.disabled = false;
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Keyboard Shortcuts
   // ---------------------------------------------------------------------------
@@ -1215,6 +1653,7 @@
   function initKeyboardListeners() {
     window.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
+        if (isModalOpen()) { closeModal(); return; }
         if (!elements.lightbox.hidden) { closeLightbox(); return; }
         if (isDrawerOpen()) { closeDrawer(); return; }
         if (document.activeElement === elements.searchInput) elements.searchInput.blur();
@@ -1226,7 +1665,7 @@
       const target = e.target;
       const tag = target && target.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (target && target.isContentEditable)) return;
-      if (!elements.lightbox.hidden || isDrawerOpen()) return;
+      if (!elements.lightbox.hidden || isDrawerOpen() || isModalOpen()) return;
 
       // Let focused buttons/links handle Space/Enter natively
       const onControl = tag === 'BUTTON' || tag === 'A';
@@ -1325,7 +1764,12 @@
 
     // Segmented filters
     bindSegmented(elements.statusGroup, setStatus);
-    bindSegmented(elements.tagModeGroup, (v) => { state.filters.tagMode = v; applyFilters(); });
+    bindSegmented(elements.tagModeGroup, (v) => { state.filters.topicMode = v; applyFilters(); });
+    bindSegmented(elements.difficultyGroup, (v) => {
+      // Clicking the active level again clears it
+      state.filters.difficulty = state.filters.difficulty === v ? 'all' : v;
+      applyFilters({ keepCurrent: true });
+    });
     bindSegmented(elements.mediaGroup, (v) => { state.filters.media = v; applyFilters(); });
     bindSegmented(elements.answersGroup, (v) => { state.filters.answers = v; applyFilters(); });
     bindSegmented(elements.blockGroup, (v) => { state.filters.block = v; applyFilters(); });
@@ -1355,6 +1799,24 @@
     elements.btnZoom.addEventListener('click', openLightbox);
     elements.lightbox.addEventListener('click', closeLightbox);
 
+    // Account
+    elements.btnAccount.addEventListener('click', openModal);
+    elements.accountCard.addEventListener('click', openModal);
+    elements.modal.addEventListener('click', (e) => {
+      if (e.target === elements.modal || e.target.closest('[data-close-modal]')) closeModal();
+    });
+    elements.loginForm.addEventListener('submit', submitLogin);
+    elements.btnLogout.addEventListener('click', doLogout);
+    elements.btnSyncNow.addEventListener('click', () => {
+      if (state.outbox.length) flushOutbox(); else pullProgress();
+    });
+
+    // Pick up answers made on other devices when coming back to the tab
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') pullProgress();
+    });
+    window.addEventListener('online', () => flushOutbox());
+
     // Logo → home
     elements.btnLogo.addEventListener('click', (e) => {
       e.preventDefault();
@@ -1379,10 +1841,11 @@
     initDOMElements();
     initTheme();
     loadLocalState();
-    renderTagsList();
+    renderChipFacets();
     renderTicketsGrid();
     attachEventListeners();
     initKeyboardListeners();
+    renderAccount();
 
     const fromHash = parseHash();
     applyFilters({ targetId: fromHash ? fromHash.id : null });
@@ -1391,7 +1854,11 @@
       navigateToQuestion(fromHash);
     }
 
-    syncWithBackend();
+    if (state.auth) {
+      setSyncStatus('syncing');
+      pullProgress();
+    }
+    loadGlobalStats();
   }
 
   // Launch when DOM is ready
