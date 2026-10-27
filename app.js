@@ -272,7 +272,7 @@
   state.questions.forEach((q) => {
     q.ai = Object.assign({
       topics: [], format: null, memorize_number: false, number_kind: null, number_value: null,
-      difficulty: 2, trap: false, trap_reason: null, involves: [], key_fact: null
+      difficulty: 2, trap: false, trap_reason: null, involves: [], key_fact: null, error_rate: null
     }, q.ai || {});
     q._searchMain = normalizeText(q.title + ' ' + q.answers.join(' '));
     q._searchExpl = normalizeText(stripHtml(q.explanation || '') + ' ' + (q.ai.key_fact || ''));
@@ -676,7 +676,9 @@
 
   function hardness(q) {
     const rate = globalErrorRate(q);
-    return q.ai.difficulty * 10 + (q.ai.trap ? 5 : 0) + (rate === null ? 0 : rate * 4);
+    // AI-estimated error rate (0–100), boosted by real error statistics when available
+    const estimate = q.ai.error_rate !== null ? q.ai.error_rate : q.ai.difficulty * 25;
+    return estimate + (q.ai.trap ? 10 : 0) + (rate === null ? 0 : rate * 50);
   }
 
   function sortList(list) {
