@@ -82,6 +82,15 @@
         </div>
       </div>
 
+      <button type="button" class="account-btn" id="btnAccount" aria-haspopup="dialog">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+          <circle cx="12" cy="7" r="4"></circle>
+        </svg>
+        <span class="account-label" id="accountLabel">Войти</span>
+        <span class="account-dot" id="accountDot" data-status="local"></span>
+      </button>
+
       <button type="button" class="icon-btn" id="btnTheme" aria-label="Переключить тему" title="Переключить тему">
         <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
@@ -113,6 +122,11 @@
       </div>
 
       <div class="panel-body">
+        <button type="button" class="account-card" id="accountCard">
+          <span class="account-card-title">Войдите по логину</span>
+          <span class="account-card-text">Ответы и все ошибки будут храниться на сервере и не пропадут при очистке браузера или смене устройства.</span>
+        </button>
+
         <!-- Search Input -->
         <div class="filter-section">
           <label class="filter-heading" for="searchInput">Поиск по тексту</label>
@@ -137,27 +151,61 @@
             <button type="button" class="seg-btn" data-value="all" role="radio">Все<span class="seg-count" data-count="all"></span></button>
             <button type="button" class="seg-btn" data-value="new" role="radio">Новые<span class="seg-count" data-count="new"></span></button>
             <button type="button" class="seg-btn" data-value="wrong" role="radio">Ошибки<span class="seg-count" data-count="wrong"></span></button>
+            <button type="button" class="seg-btn" data-value="ever_wrong" role="radio" title="Ошибались хотя бы раз — даже если потом исправили">Были ошибки<span class="seg-count" data-count="ever_wrong"></span></button>
             <button type="button" class="seg-btn" data-value="correct" role="radio">Верные<span class="seg-count" data-count="correct"></span></button>
             <button type="button" class="seg-btn seg-wide" data-value="favorites" role="radio">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"></path></svg>
               Избранное<span class="seg-count" data-count="favorites"></span>
             </button>
           </div>
-          <p class="filter-hint" id="statusHint" hidden>В режиме «Ошибки» вопросы можно решать заново — правильный ответ обновит статистику.</p>
+          <p class="filter-hint" id="statusHint" hidden>Вопросы с ошибками можно решать заново — правильный ответ обновит статистику, а история ошибок сохранится.</p>
         </div>
 
-        <!-- Smart Filter Tags -->
+        <!-- Quick picks -->
+        <div class="filter-section">
+          <div class="filter-heading">Быстрые подборки</div>
+          <div class="tag-grid" id="quickContainer"></div>
+        </div>
+
+        <!-- Difficulty -->
+        <div class="filter-section">
+          <div class="filter-heading">Сложность</div>
+          <div class="segmented" id="difficultyGroup" role="radiogroup" aria-label="Сложность">
+            <button type="button" class="seg-btn" data-value="all" role="radio">Любая</button>
+            <button type="button" class="seg-btn" data-value="1" role="radio">Легкие<span class="seg-count" data-count="1"></span></button>
+            <button type="button" class="seg-btn" data-value="2" role="radio">Средние<span class="seg-count" data-count="2"></span></button>
+            <button type="button" class="seg-btn" data-value="3" role="radio">Сложные<span class="seg-count" data-count="3"></span></button>
+          </div>
+        </div>
+
+        <!-- Numbers to memorize -->
+        <div class="filter-section">
+          <div class="filter-heading">Какое число нужно знать</div>
+          <div class="tag-grid" id="numbersContainer"></div>
+        </div>
+
+        <!-- Question format -->
+        <div class="filter-section">
+          <div class="filter-heading">Что спрашивают</div>
+          <div class="tag-grid" id="formatsContainer"></div>
+        </div>
+
+        <!-- Topics -->
         <div class="filter-section">
           <div class="filter-heading-row">
             <div class="filter-heading">Темы</div>
             <div class="mini-toggle" id="tagModeGroup" role="radiogroup" aria-label="Сочетание тем">
-              <button type="button" class="mini-btn" data-value="and" role="radio" title="Вопрос должен относиться ко всем выбранным темам">Все</button>
               <button type="button" class="mini-btn" data-value="or" role="radio" title="Вопрос относится хотя бы к одной выбранной теме">Любая</button>
+              <button type="button" class="mini-btn" data-value="and" role="radio" title="Вопрос должен относиться ко всем выбранным темам">Все</button>
             </div>
           </div>
-          <div class="tag-groups" id="tagsContainer">
-            <!-- Dynamically populated via app.js -->
-          </div>
+          <div class="tag-grid" id="tagsContainer"></div>
+        </div>
+
+        <!-- Situation -->
+        <div class="filter-section">
+          <div class="filter-heading">Участники и обстановка</div>
+          <div class="tag-grid" id="involvesContainer"></div>
         </div>
 
         <!-- Question type -->
@@ -207,6 +255,8 @@
           <div class="segmented" id="orderGroup" role="radiogroup" aria-label="Порядок вопросов">
             <button type="button" class="seg-btn" data-value="seq" role="radio">По порядку</button>
             <button type="button" class="seg-btn" data-value="shuffle" role="radio">Вперемешку</button>
+            <button type="button" class="seg-btn" data-value="hard" role="radio">Сложные сначала</button>
+            <button type="button" class="seg-btn" data-value="mistakes" role="radio">Мои ошибки сначала</button>
           </div>
         </div>
 
@@ -297,6 +347,7 @@
             </svg>
             <span>Пояснение</span>
           </div>
+          <div class="insights" id="qInsights" hidden></div>
           <div class="explanation-text" id="qExplanationText"></div>
         </div>
 
@@ -361,6 +412,38 @@
   <!-- Image lightbox -->
   <div class="lightbox" id="lightbox" hidden role="dialog" aria-label="Иллюстрация к вопросу">
     <img id="lightboxImg" alt="Иллюстрация к вопросу">
+  </div>
+
+  <!-- Account modal -->
+  <div class="modal" id="modal" hidden role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <div class="modal-card">
+      <button type="button" class="icon-btn modal-close" data-close-modal aria-label="Закрыть">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <line x1="18" y1="6" x2="6" y2="18"></line>
+          <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+      </button>
+
+      <div id="modalLogin">
+        <h2 class="modal-title" id="modalTitle">Вход</h2>
+        <p class="modal-text">Просто придумайте логин — без пароля. Под этим логином прогресс будет доступен на любом устройстве. Уже решенные здесь вопросы перенесутся в аккаунт.</p>
+        <form id="loginForm" class="login-form" autocomplete="on">
+          <input type="text" id="loginInput" class="search-input login-input" name="username" placeholder="Например, pasha" maxlength="32" autocomplete="username" autocapitalize="none" spellcheck="false" required>
+          <div class="login-error" id="loginError" hidden></div>
+          <button type="submit" class="btn btn-primary btn-block" id="btnLoginSubmit">Войти</button>
+        </form>
+      </div>
+
+      <div id="modalAccount" hidden>
+        <h2 class="modal-title">Аккаунт</h2>
+        <p class="modal-text">Вы вошли как <b id="accountName"></b>.</p>
+        <p class="sync-line" id="accountSync" data-status="ok"></p>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" id="btnSyncNow">Синхронизировать</button>
+          <button type="button" class="btn btn-danger" id="btnLogout">Выйти</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- PDD Database and Core Script -->

@@ -233,7 +233,8 @@ class PDDHandler(http.server.SimpleHTTPRequestHandler):
         data = self.read_json()
         if path == "/api/login":
             name = (data or {}).get("login") if isinstance(data, dict) else None
-            name = name.strip() if isinstance(name, str) else ""
+            # Case-insensitive logins (SQLite NOCASE only folds ASCII)
+            name = name.strip().lower() if isinstance(name, str) else ""
             if not LOGIN_RE.match(name):
                 return self.send_json({"error": "Логин: 2–32 символа, буквы, цифры, . _ -"}, 400)
             return self.send_json(login(name))

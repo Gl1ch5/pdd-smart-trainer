@@ -2,3 +2,5 @@ __pycache__/
 *.pyc
 user_progress.json
 .env
+pdd_users.db*
+*.tmp
