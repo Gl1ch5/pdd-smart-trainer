@@ -21,6 +21,7 @@ import urllib.request
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_JS = os.path.join(BASE_DIR, "pdd_data.js")
 CACHE_FILE = os.path.join(BASE_DIR, "pdd_ai_tags.json")
+SCORES_FILE = os.path.join(BASE_DIR, "pdd_ai_scores.json")
 
 TOPICS = {
     "general": "Общие положения, термины",
@@ -122,6 +123,18 @@ INVOLVES:
 )
 
 
+# Separate scoring pass: the model ignores requested label proportions, so it
+# only rates each question and build_data.py turns ratings into calibrated
+# difficulty levels / trap flags by percentile.
+SCORES_PROMPT = """Ты — опытный преподаватель автошколы. Оцени экзаменационный вопрос ПДД РФ. Отвечай ТОЛЬКО JSON:
+{"error_rate": 0-100, "trap_score": 0-10, "trap_reason": "до 80 символов" или null}
+
+- error_rate — какой процент учеников, впервые видящих вопрос, ответит неверно. Ориентиры: 5 — очевидно здравым смыслом («можно ли ехать на красный»); 20 — типовое известное правило; 40 — нужно точно знать норму или исключение; 60+ — большинство ошибается (контринтуитивно, редкое правило, похожие варианты).
+- trap_score — насколько вопрос провоцирует ошибку именно подвохом: 0 — подвоха нет, просто нужно знать правило; 5 — есть легко упускаемая деталь; 8-10 — «бытовой» интуитивный ответ неверен или всё решает мелочь (табличка, тип ТС, время суток, «только»/«обязан»). Большинство вопросов — 0-3.
+- trap_reason — в чем подвох, только если trap_score >= 5, иначе null.
+"""
+
+
 def load_questions():
     with open(DATA_JS, "r", encoding="utf-8") as f:
         raw = f.read()
@@ -187,13 +200,26 @@ def normalize(obj):
     }
 
 
-def call_llm(base, model, key, q, retries=4):
+def normalize_scores(obj):
+    if not isinstance(obj, dict):
+        raise ValueError("not an object")
+    rate = float(obj.get("error_rate"))
+    trap = float(obj.get("trap_score"))
+    reason = obj.get("trap_reason") if trap >= 5 else None
+    return {
+        "error_rate": min(100.0, max(0.0, rate)),
+        "trap_score": min(10.0, max(0.0, trap)),
+        "trap_reason": str(reason).strip()[:120] if reason else None,
+    }
+
+
+def call_llm(base, model, key, q, retries=4, scores=False):
     body = json.dumps({
         "model": model,
         "temperature": 0.1,
         "response_format": {"type": "json_object"},
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": SCORES_PROMPT if scores else SYSTEM_PROMPT},
             {"role": "user", "content": build_user_prompt(q)},
         ],
     }).encode("utf-8")
@@ -211,7 +237,8 @@ def call_llm(base, model, key, q, retries=4):
             m = re.search(r"\{.*\}", content, re.S)
             if not m:
                 raise ValueError("no JSON in response")
-            return normalize(json.loads(m.group(0)))
+            parsed = json.loads(m.group(0))
+            return normalize_scores(parsed) if scores else normalize(parsed)
         except Exception as e:  # noqa: BLE001 — retry on any transport/parse error
             last_err = e
             time.sleep(2 * (attempt + 1))
@@ -225,15 +252,17 @@ def main():
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--force", action="store_true")
+    ap.add_argument("--scores", action="store_true", help="rating pass -> pdd_ai_scores.json")
     args = ap.parse_args()
     key = os.environ.get("LLM_API_KEY")
     if not key:
         sys.exit("LLM_API_KEY is not set")
 
     questions = load_questions()
+    cache_file = SCORES_FILE if args.scores else CACHE_FILE
     cache = {}
-    if os.path.exists(CACHE_FILE) and not args.force:
-        with open(CACHE_FILE, "r", encoding="utf-8") as f:
+    if os.path.exists(cache_file) and not args.force:
+        with open(cache_file, "r", encoding="utf-8") as f:
             cache = json.load(f)
     todo = [q for q in questions if q["id"] not in cache]
     if args.limit:
@@ -245,13 +274,13 @@ def main():
     failed = []
 
     def save():
-        tmp = CACHE_FILE + ".tmp"
+        tmp = cache_file + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(cache, f, ensure_ascii=False, indent=1, sort_keys=True)
-        os.replace(tmp, CACHE_FILE)
+        os.replace(tmp, cache_file)
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as ex:
-        futures = {ex.submit(call_llm, args.base, args.model, key, q): q for q in todo}
+        futures = {ex.submit(call_llm, args.base, args.model, key, q, scores=args.scores): q for q in todo}
         for fut in concurrent.futures.as_completed(futures):
             q = futures[fut]
             try:
